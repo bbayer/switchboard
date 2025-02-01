@@ -127,8 +127,27 @@ io.on('connection', (socket) => {
     // Handle admin disconnecting clients
     socket.on('disconnectClients', (data) => {
         const client = clients.get(clientId);
-        if (client && client.isAdmin && data.clientId) {
-            disconnectClient(data.clientId);
+        if (client && client.isAdmin && data.client1 && data.client2) {
+            console.log('Admin disconnecting clients:', data.client1, 'and', data.client2);
+            
+            // Remove connection from the map
+            if (connections.has(data.client1)) {
+                connections.get(data.client1).delete(data.client2);
+            }
+            if (connections.has(data.client2)) {
+                connections.get(data.client2).delete(data.client1);
+            }
+
+            // Notify clients to close their peer connections
+            if (clients.has(data.client1)) {
+                clients.get(data.client1).socket.emit('peerDisconnected', data.client2);
+            }
+            if (clients.has(data.client2)) {
+                clients.get(data.client2).socket.emit('peerDisconnected', data.client1);
+            }
+
+            // Notify admins about the connection change
+            notifyAdmins('connectionRemoved', { client1: data.client1, client2: data.client2 });
         }
     });
 
@@ -136,13 +155,29 @@ io.on('connection', (socket) => {
     socket.on('clearConnections', () => {
         const client = clients.get(clientId);
         if (client && client.isAdmin) {
-            connections.clear();
-            // Notify all clients to disconnect
-            for (const [clientId, client] of clients.entries()) {
-                if (!client.isAdmin) {
-                    disconnectClient(clientId);
+            // Store all connections before clearing
+            const allConnections = [];
+            for (const [fromId, toSet] of connections.entries()) {
+                for (const toId of toSet) {
+                    allConnections.push({ client1: fromId, client2: toId });
                 }
             }
+            
+            // Clear all connections
+            connections.clear();
+
+            // Notify each client to close their connections
+            allConnections.forEach(conn => {
+                if (clients.has(conn.client1)) {
+                    clients.get(conn.client1).socket.emit('peerDisconnected', conn.client2);
+                }
+                if (clients.has(conn.client2)) {
+                    clients.get(conn.client2).socket.emit('peerDisconnected', conn.client1);
+                }
+            });
+
+            // Notify admins
+            notifyAdmins('connectionsCleared');
         }
     });
 

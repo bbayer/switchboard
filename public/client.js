@@ -4,6 +4,9 @@ let localStream;
 let clientId;
 let audioContext;
 let audioMeter;
+let peerConnections = new Map();
+let audioContexts = new Map();
+let audioMeters = new Map();
 
 // Initialize the application
 async function init() {
@@ -43,6 +46,31 @@ function setupSocketListeners() {
             updateStatus('Peer disconnected');
         }
     });
+
+    // Handle peer disconnection
+    socket.on('peerDisconnected', (peerId) => {
+        console.log('Peer disconnected:', peerId);
+        const peerConnection = peerConnections.get(peerId);
+        if (peerConnection) {
+            // Destroy the peer connection
+            peerConnection.destroy();
+            peerConnections.delete(peerId);
+            
+            // Clean up audio context if needed
+            if (audioContexts.has(peerId)) {
+                const ctx = audioContexts.get(peerId);
+                ctx.close();
+                audioContexts.delete(peerId);
+            }
+            
+            // Clean up audio meter if exists
+            if (audioMeters.has(peerId)) {
+                audioMeters.delete(peerId);
+            }
+
+            updateStatus('Peer disconnected');
+        }
+    });
 }
 
 // Set up audio stream and audio context
@@ -78,6 +106,7 @@ async function createPeerConnection(peerId, initiator) {
     });
 
     peer.peerId = peerId;
+    peerConnections.set(peerId, peer);
 
     peer.on('signal', (signal) => {
         socket.emit('signal', {

@@ -131,9 +131,13 @@ class AudioClientNode {
             }
         } else if (!isConnected && slotType === LiteGraph.INPUT) {
             // When RX is disconnected
-            socket.emit('disconnectClients', {
-                clientId: this.properties.clientId
-            });
+            const fromNode = graph.getNodeById(link_info.origin_id);
+            if (fromNode) {
+                socket.emit('disconnectClients', {
+                    client1: fromNode.properties.clientId,
+                    client2: this.properties.clientId
+                });
+            }
         }
     }
 
