@@ -8,6 +8,10 @@ function init() {
     socket = io();
     setupSocketListeners();
     setupGraph();
+    // Initial resize
+    setTimeout(() => {
+        resizeCanvas();
+    }, 100);
 }
 
 // Set up the LiteGraph environment
@@ -24,8 +28,85 @@ function setupGraph() {
     canvas.render_connections_border = true;
     canvas.render_curved_connections = true;
     
+    // Configure canvas for fullscreen
+    canvas.allow_searchbox = false;
+    canvas.allow_dragnodes = true;
+    canvas.allow_reconnect_links = true;
+    canvas.allow_dragcanvas = true;
+    canvas.show_info = true;
+    
     // Start graph execution
     graph.start();
+}
+
+// Resize canvas to match window size
+function resizeCanvas() {
+    const graphCanvasElement = document.getElementById('graphCanvas');
+    graphCanvasElement.width = window.innerWidth;
+    graphCanvasElement.height = window.innerHeight;
+    if (canvas) {
+        canvas.resize();
+        // If there are no nodes, just center the view
+        if (!graph || !graph._nodes.length) {
+            canvas.ds.scale = 1;
+            canvas.ds.offset[0] = window.innerWidth / 2;
+            canvas.ds.offset[1] = window.innerHeight / 2;
+            canvas.setDirty(true, true);
+        } else {
+            zoomToFit();
+        }
+    }
+}
+
+// Zoom to fit all nodes
+function zoomToFit() {
+    if (!canvas || !graph || !graph._nodes.length) {
+        // If there are no nodes, just center the view
+        if (canvas) {
+            canvas.ds.scale = 1;
+            canvas.ds.offset[0] = window.innerWidth / 2;
+            canvas.ds.offset[1] = window.innerHeight / 2;
+            canvas.setDirty(true, true);
+        }
+        return;
+    }
+
+    // Find bounds of all nodes
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    graph._nodes.forEach(node => {
+        minX = Math.min(minX, node.pos[0]);
+        minY = Math.min(minY, node.pos[1]);
+        maxX = Math.max(maxX, node.pos[0] + node.size[0]);
+        maxY = Math.max(maxY, node.pos[1] + node.size[1]);
+    });
+
+    // Add padding
+    const padding = 100;
+    minX -= padding;
+    minY -= padding;
+    maxX += padding;
+    maxY += padding;
+
+    // Calculate center and scale
+    const graphWidth = maxX - minX;
+    const graphHeight = maxY - minY;
+    const scaleX = window.innerWidth / graphWidth;
+    const scaleY = window.innerHeight / graphHeight;
+    const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in more than 100%
+
+    // Center the graph
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    // Update canvas view
+    canvas.ds.scale = scale;
+    canvas.ds.offset[0] = window.innerWidth / 2 - centerX * scale;
+    canvas.ds.offset[1] = window.innerHeight / 2 - centerY * scale;
+    canvas.setDirty(true, true);
 }
 
 // Custom node type for audio clients
@@ -152,16 +233,18 @@ function removeClientNode(clientId) {
 document.addEventListener('DOMContentLoaded', () => {
     init();
 
-    // Clear graph
-    document.getElementById('clearGraph').addEventListener('click', () => {
-        graph.clear();
-        socket.emit('clearConnections');
-    });
-
     // Handle window resize
     window.addEventListener('resize', () => {
         if (canvas) {
-            canvas.resize();
+            resizeCanvas();
         }
     });
+
+    // Set up zoom to fit button
+    const zoomToFitBtn = document.getElementById('zoomToFit');
+    if (zoomToFitBtn) {
+        zoomToFitBtn.addEventListener('click', () => {
+            zoomToFit();
+        });
+    }
 });

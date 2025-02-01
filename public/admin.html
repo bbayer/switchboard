@@ -7,44 +7,71 @@
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://unpkg.com/litegraph.js/css/litegraph.css">
     <style>
-        #graphCanvas {
-            width: 100%;
-            height: calc(100vh - 200px);
-            min-height: 500px;
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
             background-color: #1a1a1a;
+            position: fixed;
+        }
+
+        #graphCanvas {
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
             border-radius: 8px;
         }
-        .connection-info {
-            font-size: 12px;
-            color: #666;
-            margin-top: 4px;
+
+        #zoomToFit {
+            background: #333;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        #zoomToFit:hover {
+            background: #444;
+        }
+
+        #zoomToFit svg {
+            width: 16px;
+            height: 16px;
+            fill: currentColor;
         }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen p-6">
-    <div class="max-w-6xl mx-auto">
-        <div class="flex justify-between items-center mb-6">
-            <h1 class="text-3xl font-bold text-gray-800">Admin Panel</h1>
-            <div class="flex gap-4">
-                <a href="/" class="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors">
-                    Back to Client
-                </a>
-            </div>
-        </div>
-
-        <div class="bg-white rounded-lg shadow-md p-6">
-            <div id="graphEditor">
-                <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-xl font-semibold text-gray-800">Audio Routing Graph</h3>
-                    <div class="space-x-2">
-                        <button id="clearGraph" class="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors">
-                            Clear Graph
-                        </button>
-                    </div>
-                </div>
-                <canvas id="graphCanvas"></canvas>
-            </div>
-        </div>
+<body>
+    <canvas id="graphCanvas"></canvas>
+    <div class="controls">
+        <button id="zoomToFit">
+            <svg viewBox="0 0 24 24">
+                <path d="M15 3l2.3 2.3-2.89 2.87 1.42 1.42L18.7 6.7 21 9V3h-6zM3 9l2.3-2.3 2.87 2.89 1.42-1.42L6.7 5.3 9 3H3v6zm6 12l-2.3-2.3 2.89-2.87-1.42-1.42 2.89 2.87L15 21h6v-6zm12-6l-2.3 2.3-2.87-2.89-1.42 1.42 2.89 2.87L15 21h6v-6z"/>
+            </svg>
+            Zoom to Fit
+        </button>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
