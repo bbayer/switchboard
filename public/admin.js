@@ -117,26 +117,42 @@ class AudioClientNode {
         this.size = [180, 90];
         this.properties = { clientId: "", clientName: "Unknown Client" };
         this.color = "#2A363B";
+        this.connections = new Set(); // Track active connections
     }
 
     onConnectionsChange(slotType, slot, isConnected, link_info, output_slot) {
-        if (isConnected && slotType === LiteGraph.INPUT) {
-            // When RX is connected
-            const fromNode = graph.getNodeById(link_info.origin_id);
-            if (fromNode) {
+        if (!this.properties.clientId) return;
+
+        if (isConnected) {
+            const otherNode = graph.getNodeById(
+                slotType === LiteGraph.INPUT ? link_info.origin_id : link_info.target_id
+            );
+            
+            if (!otherNode || !otherNode.properties.clientId) return;
+
+            if (slotType === LiteGraph.INPUT) {
+                // When RX is connected
                 socket.emit('connectClients', {
-                    client1: fromNode.properties.clientId,
+                    client1: otherNode.properties.clientId,
                     client2: this.properties.clientId
                 });
+                this.connections.add(otherNode.properties.clientId);
             }
-        } else if (!isConnected && slotType === LiteGraph.INPUT) {
-            // When RX is disconnected
-            const fromNode = graph.getNodeById(link_info.origin_id);
-            if (fromNode) {
+        } else {
+            // When disconnected
+            const otherNode = graph.getNodeById(
+                slotType === LiteGraph.INPUT ? link_info.origin_id : link_info.target_id
+            );
+            
+            if (!otherNode || !otherNode.properties.clientId) return;
+
+            if (slotType === LiteGraph.INPUT) {
+                // When RX is disconnected
                 socket.emit('disconnectClients', {
-                    client1: fromNode.properties.clientId,
+                    client1: otherNode.properties.clientId,
                     client2: this.properties.clientId
                 });
+                this.connections.delete(otherNode.properties.clientId);
             }
         }
     }
@@ -148,6 +164,13 @@ class AudioClientNode {
         ctx.textAlign = "center";
         ctx.fillText(this.properties.clientName, this.size[0] * 0.5, 20);
         ctx.fillText(this.properties.clientId.substring(0, 8), this.size[0] * 0.5, 40);
+        
+        // Draw connection count if any
+        if (this.connections.size > 0) {
+            ctx.fillStyle = "#666";
+            ctx.textAlign = "center";
+            ctx.fillText(`${this.connections.size} connection${this.connections.size > 1 ? 's' : ''}`, this.size[0] * 0.5, 60);
+        }
         
         // Draw RX/TX labels
         ctx.fillStyle = "#666";

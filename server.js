@@ -87,39 +87,50 @@ io.on('connection', (socket) => {
         socket.emit('clientsList', clientsList);
     }
 
-    // Handle client signaling
+    // Handle signaling between peers
     socket.on('signal', (data) => {
-        if (data.target && clients.has(data.target)) {
+        if (clients.has(data.target)) {
+            console.log('Forwarding signal from', clientId, 'to', data.target);
             clients.get(data.target).socket.emit('signal', {
-                from: clientId,
-                signal: data.signal
+                signal: data.signal,
+                from: clientId
             });
         }
     });
 
-    // Handle admin connecting two clients
+    // Handle admin connecting clients
     socket.on('connectClients', (data) => {
         const client = clients.get(clientId);
         if (client && client.isAdmin && data.client1 && data.client2) {
-            if (clients.has(data.client1) && clients.has(data.client2)) {
-                // Store the connection
-                if (!connections.has(data.client1)) {
-                    connections.set(data.client1, new Set());
-                }
-                connections.get(data.client1).add(data.client2);
-                
-                // Store the connection in client's connections
-                clients.get(data.client1).connections.add(data.client2);
+            console.log('Admin connecting clients:', data.client1, 'and', data.client2);
+            
+            // Initialize connections set if not exists
+            if (!connections.has(data.client1)) {
+                connections.set(data.client1, new Set());
+            }
+            if (!connections.has(data.client2)) {
+                connections.set(data.client2, new Set());
+            }
 
-                // Notify clients to establish connection
+            // Add bidirectional connection
+            connections.get(data.client1).add(data.client2);
+
+            // Notify clients to establish connection
+            if (clients.has(data.client1) && clients.has(data.client2)) {
+                // Tell client1 to initiate connection to client2
                 clients.get(data.client1).socket.emit('initiateConnection', {
                     peerId: data.client2,
                     initiator: true
                 });
+                
+                // Tell client2 to accept connection from client1
                 clients.get(data.client2).socket.emit('initiateConnection', {
                     peerId: data.client1,
                     initiator: false
                 });
+
+                // Notify admins about the new connection
+                notifyAdmins('connectionAdded', { client1: data.client1, client2: data.client2 });
             }
         }
     });

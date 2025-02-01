@@ -1,10 +1,9 @@
 let socket;
-let peer;
 let localStream;
 let clientId;
 let audioContext;
 let audioMeter;
-let peerConnections = new Map();
+let peerConnections = new Map(); // Map of peerId -> SimplePeer
 let audioContexts = new Map();
 let audioMeters = new Map();
 
@@ -12,7 +11,7 @@ let audioMeters = new Map();
 async function init() {
     socket = io({
         secure: true,
-        rejectUnauthorized: false // Accept self-signed certificates
+        rejectUnauthorized: false
     });
     setupSocketListeners();
     await setupAudio();
@@ -26,6 +25,7 @@ function setupSocketListeners() {
     });
 
     socket.on('signal', async (data) => {
+        const peer = peerConnections.get(data.from);
         if (peer) {
             try {
                 peer.signal(data.signal);
@@ -40,37 +40,38 @@ function setupSocketListeners() {
     });
 
     socket.on('clientDisconnected', (disconnectedId) => {
-        if (peer && peer.peerId === disconnectedId) {
-            peer.destroy();
-            peer = null;
+        if (peerConnections.has(disconnectedId)) {
+            cleanupPeerConnection(disconnectedId);
             updateStatus('Peer disconnected');
         }
     });
 
-    // Handle peer disconnection
     socket.on('peerDisconnected', (peerId) => {
         console.log('Peer disconnected:', peerId);
-        const peerConnection = peerConnections.get(peerId);
-        if (peerConnection) {
-            // Destroy the peer connection
-            peerConnection.destroy();
-            peerConnections.delete(peerId);
-            
-            // Clean up audio context if needed
-            if (audioContexts.has(peerId)) {
-                const ctx = audioContexts.get(peerId);
-                ctx.close();
-                audioContexts.delete(peerId);
-            }
-            
-            // Clean up audio meter if exists
-            if (audioMeters.has(peerId)) {
-                audioMeters.delete(peerId);
-            }
-
-            updateStatus('Peer disconnected');
-        }
+        cleanupPeerConnection(peerId);
+        updateStatus('Peer disconnected');
     });
+}
+
+// Clean up a peer connection and its resources
+function cleanupPeerConnection(peerId) {
+    const peerConnection = peerConnections.get(peerId);
+    if (peerConnection) {
+        peerConnection.destroy();
+        peerConnections.delete(peerId);
+        
+        // Clean up audio context if needed
+        if (audioContexts.has(peerId)) {
+            const ctx = audioContexts.get(peerId);
+            ctx.close();
+            audioContexts.delete(peerId);
+        }
+        
+        // Clean up audio meter if exists
+        if (audioMeters.has(peerId)) {
+            audioMeters.delete(peerId);
+        }
+    }
 }
 
 // Set up audio stream and audio context
@@ -95,22 +96,21 @@ async function setupAudio() {
 
 // Create a new peer connection
 async function createPeerConnection(peerId, initiator) {
-    if (peer) {
-        peer.destroy();
-    }
+    // Clean up existing connection if any
+    cleanupPeerConnection(peerId);
 
-    peer = new SimplePeer({
+    const peer = new SimplePeer({
         initiator: initiator,
         stream: localStream,
         trickle: false
     });
 
-    peer.peerId = peerId;
     peerConnections.set(peerId, peer);
 
     peer.on('signal', (signal) => {
         socket.emit('signal', {
             target: peerId,
+            from: clientId,
             signal: signal
         });
     });
@@ -119,16 +119,18 @@ async function createPeerConnection(peerId, initiator) {
         const audio = new Audio();
         audio.srcObject = stream;
         audio.play();
-        updateStatus('Connected to peer');
+        updateStatus(`Connected to peer ${peerId}`);
     });
 
     peer.on('error', (err) => {
         console.error('Peer error:', err);
         updateStatus('Connection error');
+        cleanupPeerConnection(peerId);
     });
 
     peer.on('close', () => {
         updateStatus('Peer connection closed');
+        cleanupPeerConnection(peerId);
     });
 }
 
@@ -175,11 +177,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Volume slider
     const volumeSlider = document.getElementById('volumeSlider');
     volumeSlider.addEventListener('input', (e) => {
-        if (peer && peer.remoteStream) {
-            const audio = document.querySelector('audio');
-            if (audio) {
-                audio.volume = e.target.value / 100;
+        const peerConnectionsArray = Array.from(peerConnections.values());
+        peerConnectionsArray.forEach((peer) => {
+            if (peer.remoteStream) {
+                const audio = document.querySelector('audio');
+                if (audio) {
+                    audio.volume = e.target.value / 100;
+                }
             }
-        }
+        });
     });
 });
