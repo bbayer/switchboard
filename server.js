@@ -34,13 +34,64 @@ const io = socketIo(server, {
 });
 
 // Track clients and connections
-const clients = new Set();
-const connections = new Map(); // Map<receiverId, Set<transmitterId>>
+const clients = new Map(); // socketId -> Set(connectedTo)
+const clientNames = new Map(); // socketId -> clientName
+const connections = new Map(); // receiverId -> Set(transmitterIds)
 let adminSocket = null;
+
+function getClientInfo(socketId) {
+    return {
+        socketId,
+        clientName: clientNames.get(socketId) || null
+    };
+}
+
+function broadcastClientsUpdate() {
+    const clientsList = Array.from(clients.keys()).map(getClientInfo);
+    const connectionsList = Array.from(connections.entries()).map(([receiver, transmitters]) => ({
+        receiver: getClientInfo(receiver),
+        transmitters: Array.from(transmitters).map(getClientInfo)
+    }));
+
+    io.emit('clientsUpdate', { 
+        clients: clientsList,
+        connections: connectionsList
+    });
+}
+
+function sendClientsUpdate() {
+    if (!adminSocket) return;
+
+    // Filter out admin from clients list
+    const clientsList = Array.from(clients.keys()).filter(id => id !== adminSocket.id).map(getClientInfo);
+
+    const clientsInfo = {
+        clients: clientsList,
+        connections: Array.from(connections.entries()).map(([receiverId, transmitters]) => ({
+            receiver: getClientInfo(receiverId),
+            transmitters: Array.from(transmitters).map(getClientInfo)
+        }))
+    };
+
+    adminSocket.emit('clientsUpdate', clientsInfo);
+}
 
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
-    clients.add(socket.id);
+    clients.set(socket.id, new Set());
+    clientNames.set(socket.id, null);
+
+    // Check for client ID in query parameters
+    const clientId = socket.handshake.query.id;
+    if (clientId) {
+        clientNames.set(socket.id, clientId);
+    }
+
+    // Send client their socket ID and name
+    socket.emit('clientInfo', { 
+        socketId: socket.id,
+        clientName: clientNames.get(socket.id)
+    });
 
     // Send client ID
     socket.emit('clientId', socket.id);
@@ -57,6 +108,7 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log('Client disconnected:', socket.id);
         clients.delete(socket.id);
+        clientNames.delete(socket.id);
         
         // Clean up connections
         if (connections.has(socket.id)) {
@@ -90,6 +142,10 @@ io.on('connection', (socket) => {
         }
         connections.get(client2).add(client1);
 
+        // Update clients' connected sets
+        clients.get(client1).add(client2);
+        clients.get(client2).add(client1);
+
         // Notify clients to establish connection
         const transmitterSocket = io.sockets.sockets.get(client1);
         const receiverSocket = io.sockets.sockets.get(client2);
@@ -121,6 +177,10 @@ io.on('connection', (socket) => {
             }
         }
 
+        // Update clients' connected sets
+        if (clients.has(client1)) clients.get(client1).delete(client2);
+        if (clients.has(client2)) clients.get(client2).delete(client1);
+
         // Notify clients
         const transmitterSocket = io.sockets.sockets.get(client1);
         const receiverSocket = io.sockets.sockets.get(client2);
@@ -147,24 +207,6 @@ io.on('connection', (socket) => {
     // Send initial clients list
     sendClientsUpdate();
 });
-
-// Function to send clients and connections update to admin
-function sendClientsUpdate() {
-    if (!adminSocket) return;
-
-    // Filter out admin from clients list
-    const clientsList = Array.from(clients).filter(id => id !== adminSocket.id);
-
-    const clientsInfo = {
-        clients: clientsList,
-        connections: Array.from(connections.entries()).map(([receiverId, transmitters]) => ({
-            receiver: receiverId,
-            transmitters: Array.from(transmitters)
-        }))
-    };
-
-    adminSocket.emit('clientsUpdate', clientsInfo);
-}
 
 // Serve admin page
 app.get('/admin', (req, res) => {

@@ -11,6 +11,9 @@ let receivingFrom = new Set();
 // Initialize the application
 async function init() {
     socket = io({
+        query: {
+            id: new URLSearchParams(window.location.search).get('id')
+        },
         secure: true,
         rejectUnauthorized: false
     });
@@ -23,6 +26,13 @@ function setupSocketListeners() {
     socket.on('clientId', (id) => {
         clientId = id;
         updateStatus(`Received client ID: ${id}`);
+    });
+
+    socket.on('clientInfo', (info) => {
+        clientId = info.socketId;
+        document.getElementById('socketId').textContent = info.socketId.substring(0, 8);
+        document.getElementById('clientName').textContent = info.clientName || 'Unnamed';
+        updateStatus(`Connected as ${info.clientName || 'Unnamed'} (${info.socketId.substring(0, 8)})`);
     });
 
     socket.on('signal', async (data) => {

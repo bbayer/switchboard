@@ -58,7 +58,7 @@ function setupSocketListeners() {
         
         // First, remove nodes for disconnected clients
         for (const [nodeClientId, node] of clientNodes) {
-            if (!clients.includes(nodeClientId)) {
+            if (!clients.some(c => c.socketId === nodeClientId)) {
                 console.log('Removing node for disconnected client:', nodeClientId);
                 graph.remove(node);
                 clientNodes.delete(nodeClientId);
@@ -66,11 +66,16 @@ function setupSocketListeners() {
         }
         
         // Then, add nodes for new clients
-        clients.forEach(clientId => {
-            if (!clientNodes.has(clientId)) {
-                console.log('Adding node for new client:', clientId);
-                const node = createClientNode(clientId);
-                clientNodes.set(clientId, node);
+        clients.forEach(client => {
+            if (!clientNodes.has(client.socketId)) {
+                console.log('Adding node for new client:', client);
+                const node = createClientNode(client);
+                clientNodes.set(client.socketId, node);
+            } else {
+                // Update existing node's display name if needed
+                const node = clientNodes.get(client.socketId);
+                node.properties.clientName = client.clientName;
+                node.properties.displayName = client.clientName || `Client ${client.socketId.substring(0, 4)}`;
             }
         });
         
@@ -80,32 +85,27 @@ function setupSocketListeners() {
             connections.forEach(conn => {
                 const { receiver, transmitters } = conn;
                 transmitters.forEach(transmitter => {
-                    const receiverNode = findNodeByClientId(receiver);
-                    const transmitterNode = findNodeByClientId(transmitter);
+                    const receiverNode = findNodeByClientId(receiver.socketId);
+                    const transmitterNode = findNodeByClientId(transmitter.socketId);
                     
                     if (receiverNode && transmitterNode) {
                         // Get slot indices
                         const outputSlot = transmitterNode.findOutputSlot("tx");
-                        const inputSlot = receiverNode.getAvailableRxSlot(); // Use new slot getter
+                        const inputSlot = receiverNode.getAvailableRxSlot();
                         
                         if (outputSlot !== -1 && inputSlot !== -1) {
                             // Create visual connection without triggering events
-                            // Store current onConnectionsChange handlers
                             const receiverHandler = receiverNode.onConnectionsChange;
                             const transmitterHandler = transmitterNode.onConnectionsChange;
                             
-                            // Temporarily remove handlers
                             receiverNode.onConnectionsChange = null;
                             transmitterNode.onConnectionsChange = null;
                             
-                            // Create connection
                             receiverNode.connect(inputSlot, transmitterNode, outputSlot);
                             
-                            // Update tracking sets
-                            receiverNode.incomingConnections.add(transmitter);
-                            transmitterNode.outgoingConnections.add(receiver);
+                            receiverNode.incomingConnections.add(transmitter.socketId);
+                            transmitterNode.outgoingConnections.add(receiver.socketId);
                             
-                            // Restore handlers
                             receiverNode.onConnectionsChange = receiverHandler;
                             transmitterNode.onConnectionsChange = transmitterHandler;
                         }
@@ -113,7 +113,6 @@ function setupSocketListeners() {
                 });
             });
             
-            // Update canvas
             canvas.setDirty(true, true);
         }, 100); // Small delay to ensure nodes are ready
     });
@@ -163,7 +162,7 @@ function findNodeByClientId(clientId) {
 // Update client nodes based on current clients
 function updateClientNodes(clients) {
     // Track current client IDs for cleanup
-    const currentClientIds = new Set(clients);
+    const currentClientIds = new Set(clients.map(c => c.socketId));
     
     // Remove nodes for disconnected clients
     for (let [nodeId, node] of clientNodes) {
@@ -174,10 +173,10 @@ function updateClientNodes(clients) {
     }
 
     // Add new nodes for new clients
-    clients.forEach((clientId) => {
-        if (!clientNodes.has(clientId)) {
-            const node = createClientNode(clientId);
-            clientNodes.set(clientId, node);
+    clients.forEach((client) => {
+        if (!clientNodes.has(client.socketId)) {
+            const node = createClientNode(client);
+            clientNodes.set(client.socketId, node);
         }
     });
 
@@ -186,16 +185,17 @@ function updateClientNodes(clients) {
 }
 
 // Create a new client node
-function createClientNode(clientId) {
+function createClientNode(client) {
     const node = LiteGraph.createNode("audio/client");
-    node.properties.clientId = clientId;
-    node.properties.clientName = `Client ${clientId.substring(0, 4)}`;
+    node.properties.socketId = client.socketId;
+    node.properties.clientName = client.clientName;
+    node.properties.displayName = client.clientName || `Client ${client.socketId.substring(0, 4)}`;
     
     // Position node in a grid layout
     const nodeCount = clientNodes.size;
     const row = Math.floor(nodeCount / 3);
     const col = nodeCount % 3;
-    node.pos = [col * 250 + 100, row * 150 + 100];
+    node.pos = [col * 250 + 50, row * 150 + 50];
     
     graph.add(node);
     return node;
@@ -288,7 +288,11 @@ class AudioClientNode {
         });
 
         this.size = [180, 90];
-        this.properties = { clientId: "", clientName: "Unknown Client" };
+        this.properties = { 
+            socketId: "",
+            clientName: "Unknown Client",
+            displayName: "Unknown Client"
+        };
         this.color = "#2A363B";
         this.incomingConnections = new Set(); // Track incoming connections
         this.outgoingConnections = new Set(); // Track outgoing connections
@@ -317,33 +321,33 @@ class AudioClientNode {
     }
 
     onConnectionsChange(slotType, slot, isConnected, link_info, output_slot) {
-        if (!this.properties.clientId) return;
+        if (!this.properties.socketId) return;
 
         const otherNode = graph.getNodeById(
             slotType === LiteGraph.INPUT ? link_info.origin_id : link_info.target_id
         );
         
-        if (!otherNode || !otherNode.properties.clientId) return;
+        if (!otherNode || !otherNode.properties.socketId) return;
 
         if (isConnected) {
             if (slotType === LiteGraph.INPUT) {
                 // When RX is connected (receiving audio)
                 socket.emit('connectClients', {
-                    client1: otherNode.properties.clientId,
-                    client2: this.properties.clientId
+                    client1: otherNode.properties.socketId,
+                    client2: this.properties.socketId
                 });
-                this.incomingConnections.add(otherNode.properties.clientId);
-                otherNode.outgoingConnections.add(this.properties.clientId);
+                this.incomingConnections.add(otherNode.properties.socketId);
+                otherNode.outgoingConnections.add(this.properties.socketId);
             }
         } else {
             if (slotType === LiteGraph.INPUT) {
                 // When RX is disconnected
                 socket.emit('disconnectClients', {
-                    client1: otherNode.properties.clientId,
-                    client2: this.properties.clientId
+                    client1: otherNode.properties.socketId,
+                    client2: this.properties.socketId
                 });
-                this.incomingConnections.delete(otherNode.properties.clientId);
-                otherNode.outgoingConnections.delete(this.properties.clientId);
+                this.incomingConnections.delete(otherNode.properties.socketId);
+                otherNode.outgoingConnections.delete(this.properties.socketId);
 
                 // Clean up empty slots except the first one
                 this.cleanupEmptySlots();
@@ -380,8 +384,16 @@ class AudioClientNode {
         ctx.font = "12px Arial";
         ctx.fillStyle = "#CCC";
         ctx.textAlign = "center";
-        ctx.fillText(this.properties.clientName, this.size[0] * 0.5, 20);
-        ctx.fillText(this.properties.clientId.substring(0, 8), this.size[0] * 0.5, 40);
+        
+        // Draw client name (user-defined ID or socket ID)
+        ctx.fillText(this.properties.displayName, this.size[0] * 0.5, 20);
+        
+        // Draw socket ID in smaller text if client name exists
+        if (this.properties.clientName) {
+            ctx.font = "10px Arial";
+            ctx.fillStyle = "#888";
+            ctx.fillText(this.properties.socketId.substring(0, 8), this.size[0] * 0.5, 35);
+        }
         
         // Draw connection counts
         const inCount = this.incomingConnections.size;
@@ -390,17 +402,19 @@ class AudioClientNode {
         if (inCount > 0 || outCount > 0) {
             ctx.fillStyle = "#666";
             ctx.textAlign = "center";
+            ctx.font = "11px Arial";
             
             let connectionText = [];
             if (inCount > 0) connectionText.push(`${inCount} in`);
             if (outCount > 0) connectionText.push(`${outCount} out`);
             
-            ctx.fillText(connectionText.join(', '), this.size[0] * 0.5, 60);
+            ctx.fillText(connectionText.join(', '), this.size[0] * 0.5, 55);
         }
         
         // Draw TX label with connection count
         ctx.fillStyle = "#666";
         ctx.textAlign = "right";
+        ctx.font = "11px Arial";
         ctx.fillText(`TX${outCount > 0 ? ` (${outCount})` : ''}`, this.size[0] - 10, this.size[1] - 15);
 
         // Draw connection indicators

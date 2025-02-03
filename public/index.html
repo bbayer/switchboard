@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebRTC Audio App</title>
+    <link href="https://cdn.tailwindcss.com" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <style>
         /* Status log styles */
@@ -109,10 +110,25 @@
 </head>
 <body class="bg-gray-100 min-h-screen p-6">
     <div class="max-w-4xl mx-auto">
-        <div class="flex justify-between items-center mb-6">
-            <h1 class="text-3xl font-bold text-gray-800">Audio Client</h1>
-            <a href="/admin" class="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition-colors">
+        <div class="flex items-center gap-8 bg-white rounded-lg shadow-sm p-4 mb-6">
+            <h1 class="text-2xl font-bold text-gray-800 shrink-0">Audio Client</h1>
+            
+            <div class="flex flex-col space-y-2 px-4 py-2 bg-gray-50 rounded-md flex-grow">
+                <div class="flex items-center space-x-2">
+                    <span class="text-sm font-medium text-gray-500 w-20">Client ID:</span>
+                    <span id="clientName" class="text-sm font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-800">-</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <span class="text-sm font-medium text-gray-500 w-20">Socket ID:</span>
+                    <span id="socketId" class="text-sm font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-800">-</span>
+                </div>
+            </div>
+            
+            <a href="/admin" class="inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-md shadow-sm transition-colors duration-200 shrink-0">
                 Admin Panel
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-2" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+                </svg>
             </a>
         </div>
 
