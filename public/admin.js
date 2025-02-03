@@ -2,10 +2,14 @@ let socket;
 let clientId;
 let graph;
 let canvas;
+let clientNodes = new Map(); // Track client nodes
 
 // Initialize the application
 function init() {
-    socket = io();
+    socket = io({
+        secure: true,
+        rejectUnauthorized: false
+    });
     setupSocketListeners();
     setupGraph();
     // Initial resize
@@ -23,7 +27,7 @@ function setupGraph() {
     LiteGraph.registerNodeType("audio/client", AudioClientNode);
     
     // Set some graph configurations
-    graph.config.align_to_grid = true;
+    graph.configure({ align_to_grid: true });
     canvas.background_image = "";
     canvas.render_connections_border = true;
     canvas.render_curved_connections = true;
@@ -39,9 +43,169 @@ function setupGraph() {
     graph.start();
 }
 
+// Set up all socket event listeners
+function setupSocketListeners() {
+    socket.on('clientId', (id) => {
+        clientId = id;
+        console.log('Admin connected with ID:', clientId);
+        // Authenticate as admin
+        socket.emit('adminAuth');
+    });
+
+    socket.on('clientsUpdate', (data) => {
+        console.log('Received clients update:', data);
+        const { clients, connections } = data;
+        
+        // First, remove nodes for disconnected clients
+        for (const [nodeClientId, node] of clientNodes) {
+            if (!clients.includes(nodeClientId)) {
+                console.log('Removing node for disconnected client:', nodeClientId);
+                graph.remove(node);
+                clientNodes.delete(nodeClientId);
+            }
+        }
+        
+        // Then, add nodes for new clients
+        clients.forEach(clientId => {
+            if (!clientNodes.has(clientId)) {
+                console.log('Adding node for new client:', clientId);
+                const node = createClientNode(clientId);
+                clientNodes.set(clientId, node);
+            }
+        });
+        
+        // Wait a bit for nodes to be fully created
+        setTimeout(() => {
+            // Restore connections visually without triggering events
+            connections.forEach(conn => {
+                const { receiver, transmitters } = conn;
+                transmitters.forEach(transmitter => {
+                    const receiverNode = findNodeByClientId(receiver);
+                    const transmitterNode = findNodeByClientId(transmitter);
+                    
+                    if (receiverNode && transmitterNode) {
+                        // Get slot indices
+                        const outputSlot = transmitterNode.findOutputSlot("tx");
+                        const inputSlot = receiverNode.getAvailableRxSlot(); // Use new slot getter
+                        
+                        if (outputSlot !== -1 && inputSlot !== -1) {
+                            // Create visual connection without triggering events
+                            // Store current onConnectionsChange handlers
+                            const receiverHandler = receiverNode.onConnectionsChange;
+                            const transmitterHandler = transmitterNode.onConnectionsChange;
+                            
+                            // Temporarily remove handlers
+                            receiverNode.onConnectionsChange = null;
+                            transmitterNode.onConnectionsChange = null;
+                            
+                            // Create connection
+                            receiverNode.connect(inputSlot, transmitterNode, outputSlot);
+                            
+                            // Update tracking sets
+                            receiverNode.incomingConnections.add(transmitter);
+                            transmitterNode.outgoingConnections.add(receiver);
+                            
+                            // Restore handlers
+                            receiverNode.onConnectionsChange = receiverHandler;
+                            transmitterNode.onConnectionsChange = transmitterHandler;
+                        }
+                    }
+                });
+            });
+            
+            // Update canvas
+            canvas.setDirty(true, true);
+        }, 100); // Small delay to ensure nodes are ready
+    });
+
+    socket.on('clientsList', (clients) => {
+        console.log('Received clients list:', clients);
+        updateClientNodes(clients);
+    });
+}
+
+// Helper method to find slot index by name
+LGraphNode.prototype.findInputSlot = function(name) {
+    if (!this.inputs) return -1;
+    for (let i = 0; i < this.inputs.length; ++i) {
+        if (this.inputs[i].name === name) {
+            return i;
+        }
+    }
+    return -1;
+};
+
+LGraphNode.prototype.findOutputSlot = function(name) {
+    if (!this.outputs) return -1;
+    for (let i = 0; i < this.outputs.length; ++i) {
+        if (this.outputs[i].name === name) {
+            return i;
+        }
+    }
+    return -1;
+};
+
+// Helper to check if input is already connected to a node
+LGraphNode.prototype.isInputConnectedTo = function(node, slot) {
+    if (!this.inputs || !this.inputs[slot] || !this.inputs[slot].link) return false;
+    const links = Array.isArray(this.inputs[slot].link) ? this.inputs[slot].link : [this.inputs[slot].link];
+    return links.some(link => {
+        const linkInfo = graph.links[link];
+        return linkInfo && linkInfo.origin_id === node.id;
+    });
+};
+
+// Find a node by client ID
+function findNodeByClientId(clientId) {
+    return clientNodes.get(clientId);
+}
+
+// Update client nodes based on current clients
+function updateClientNodes(clients) {
+    // Track current client IDs for cleanup
+    const currentClientIds = new Set(clients);
+    
+    // Remove nodes for disconnected clients
+    for (let [nodeId, node] of clientNodes) {
+        if (!currentClientIds.has(nodeId)) {
+            graph.remove(node);
+            clientNodes.delete(nodeId);
+        }
+    }
+
+    // Add new nodes for new clients
+    clients.forEach((clientId) => {
+        if (!clientNodes.has(clientId)) {
+            const node = createClientNode(clientId);
+            clientNodes.set(clientId, node);
+        }
+    });
+
+    // Trigger canvas update
+    canvas.setDirty(true, true);
+}
+
+// Create a new client node
+function createClientNode(clientId) {
+    const node = LiteGraph.createNode("audio/client");
+    node.properties.clientId = clientId;
+    node.properties.clientName = `Client ${clientId.substring(0, 4)}`;
+    
+    // Position node in a grid layout
+    const nodeCount = clientNodes.size;
+    const row = Math.floor(nodeCount / 3);
+    const col = nodeCount % 3;
+    node.pos = [col * 250 + 100, row * 150 + 100];
+    
+    graph.add(node);
+    return node;
+}
+
 // Resize canvas to match window size
 function resizeCanvas() {
     const graphCanvasElement = document.getElementById('graphCanvas');
+    if (!graphCanvasElement) return;
+    
     graphCanvasElement.width = window.innerWidth;
     graphCanvasElement.height = window.innerHeight;
     if (canvas) {
@@ -109,52 +273,106 @@ function zoomToFit() {
     canvas.setDirty(true, true);
 }
 
-// Custom node type for audio clients
 class AudioClientNode {
     constructor() {
-        this.addInput("rx", "audio");
-        this.addOutput("tx", "audio");
+        // Configure the node
+        this.addInput("rx", "audio", {
+            removable: true,
+            color_off: "#666",
+            color_on: "#4CAF50"
+        });
+        
+        this.addOutput("tx", "audio", {
+            color_off: "#666",
+            color_on: "#2196F3"
+        });
+
         this.size = [180, 90];
         this.properties = { clientId: "", clientName: "Unknown Client" };
         this.color = "#2A363B";
-        this.connections = new Set(); // Track active connections
+        this.incomingConnections = new Set(); // Track incoming connections
+        this.outgoingConnections = new Set(); // Track outgoing connections
+        this.rxSlotCount = 1; // Track number of RX slots
+    }
+
+    // Find an available RX slot or create a new one
+    getAvailableRxSlot() {
+        // Check existing slots
+        for (let i = 0; i < this.inputs.length; i++) {
+            if (!this.inputs[i].link) {
+                return i;
+            }
+        }
+        
+        // If no available slot, create a new one
+        const newSlotIndex = this.inputs.length;
+        this.addInput(`rx${newSlotIndex}`, "audio", {
+            removable: true,
+            color_off: "#666",
+            color_on: "#4CAF50"
+        });
+        this.rxSlotCount++;
+        this.size[1] = Math.max(90, 60 + this.rxSlotCount * 20); // Adjust node height
+        return newSlotIndex;
     }
 
     onConnectionsChange(slotType, slot, isConnected, link_info, output_slot) {
         if (!this.properties.clientId) return;
 
-        if (isConnected) {
-            const otherNode = graph.getNodeById(
-                slotType === LiteGraph.INPUT ? link_info.origin_id : link_info.target_id
-            );
-            
-            if (!otherNode || !otherNode.properties.clientId) return;
+        const otherNode = graph.getNodeById(
+            slotType === LiteGraph.INPUT ? link_info.origin_id : link_info.target_id
+        );
+        
+        if (!otherNode || !otherNode.properties.clientId) return;
 
+        if (isConnected) {
             if (slotType === LiteGraph.INPUT) {
-                // When RX is connected
+                // When RX is connected (receiving audio)
                 socket.emit('connectClients', {
                     client1: otherNode.properties.clientId,
                     client2: this.properties.clientId
                 });
-                this.connections.add(otherNode.properties.clientId);
+                this.incomingConnections.add(otherNode.properties.clientId);
+                otherNode.outgoingConnections.add(this.properties.clientId);
             }
         } else {
-            // When disconnected
-            const otherNode = graph.getNodeById(
-                slotType === LiteGraph.INPUT ? link_info.origin_id : link_info.target_id
-            );
-            
-            if (!otherNode || !otherNode.properties.clientId) return;
-
             if (slotType === LiteGraph.INPUT) {
                 // When RX is disconnected
                 socket.emit('disconnectClients', {
                     client1: otherNode.properties.clientId,
                     client2: this.properties.clientId
                 });
-                this.connections.delete(otherNode.properties.clientId);
+                this.incomingConnections.delete(otherNode.properties.clientId);
+                otherNode.outgoingConnections.delete(this.properties.clientId);
+
+                // Clean up empty slots except the first one
+                this.cleanupEmptySlots();
             }
         }
+
+        this.setDirtyCanvas(true, true);
+    }
+
+    // Clean up empty slots, keeping at least one
+    cleanupEmptySlots() {
+        // Keep track of slots to remove
+        const slotsToRemove = [];
+        
+        // Find empty slots (except the first one)
+        for (let i = this.inputs.length - 1; i > 0; i--) {
+            if (!this.inputs[i].link) {
+                slotsToRemove.push(i);
+            }
+        }
+        
+        // Remove empty slots from the end
+        for (let i = slotsToRemove.length - 1; i >= 0; i--) {
+            this.removeInput(slotsToRemove[i]);
+            this.rxSlotCount--;
+        }
+        
+        // Adjust node height
+        this.size[1] = Math.max(90, 60 + this.rxSlotCount * 20);
     }
 
     onDrawForeground(ctx) {
@@ -165,113 +383,52 @@ class AudioClientNode {
         ctx.fillText(this.properties.clientName, this.size[0] * 0.5, 20);
         ctx.fillText(this.properties.clientId.substring(0, 8), this.size[0] * 0.5, 40);
         
-        // Draw connection count if any
-        if (this.connections.size > 0) {
+        // Draw connection counts
+        const inCount = this.incomingConnections.size;
+        const outCount = this.outgoingConnections.size;
+        
+        if (inCount > 0 || outCount > 0) {
             ctx.fillStyle = "#666";
             ctx.textAlign = "center";
-            ctx.fillText(`${this.connections.size} connection${this.connections.size > 1 ? 's' : ''}`, this.size[0] * 0.5, 60);
+            
+            let connectionText = [];
+            if (inCount > 0) connectionText.push(`${inCount} in`);
+            if (outCount > 0) connectionText.push(`${outCount} out`);
+            
+            ctx.fillText(connectionText.join(', '), this.size[0] * 0.5, 60);
         }
         
-        // Draw RX/TX labels
+        // Draw TX label with connection count
         ctx.fillStyle = "#666";
-        ctx.textAlign = "left";
-        ctx.fillText("RX", 10, 65);
         ctx.textAlign = "right";
-        ctx.fillText("TX", this.size[0] - 10, 65);
-    }
-}
+        ctx.fillText(`TX${outCount > 0 ? ` (${outCount})` : ''}`, this.size[0] - 10, this.size[1] - 15);
 
-AudioClientNode.title = "Audio Client";
-AudioClientNode.desc = "WebRTC Audio Client Node";
-
-// Set up all socket event listeners
-function setupSocketListeners() {
-    socket.on('clientId', (id) => {
-        clientId = id;
-        // Auto-authenticate as admin
-        socket.emit('adminAuth');
-    });
-
-    socket.on('newClient', (client) => {
-        console.log('New client connected:', client);
-        addClientNode(client);
-    });
-
-    socket.on('clientDisconnected', (disconnectedId) => {
-        console.log('Client disconnected:', disconnectedId);
-        removeClientNode(disconnectedId);
-    });
-
-    socket.on('clientsList', (clients) => {
-        console.log('Received clients list:', clients);
-        // Clear existing nodes
-        graph.clear();
-        
-        // Add nodes for each client
-        clients.forEach(client => {
-            addClientNode(client);
-        });
-    });
-}
-
-// Find a node by client ID
-function findNodeByClientId(clientId) {
-    const nodes = graph._nodes;
-    return nodes.find(node => node.properties && node.properties.clientId === clientId);
-}
-
-// Add a new client node to the graph
-function addClientNode(clientId) {
-    console.log('Adding node for client:', clientId);
-    const existingNode = findNodeByClientId(clientId);
-    if (existingNode) {
-        console.log('Node already exists for client:', clientId);
-        return;
-    }
-
-    const node = LiteGraph.createNode("audio/client");
-    if (!node) {
-        console.error('Failed to create node for client:', clientId);
-        return;
-    }
-
-    node.properties.clientId = clientId;
-    node.properties.clientName = `Client ${clientId.substring(0, 8)}`;
-    
-    // Position node in a grid-like layout
-    const nodeCount = (graph._nodes || []).length;
-    node.pos = [nodeCount * 220, nodeCount * 120];
-    
-    graph.add(node);
-    console.log('Added node for client:', clientId);
-}
-
-// Remove a client node from the graph
-function removeClientNode(clientId) {
-    console.log('Removing node for client:', clientId);
-    const node = findNodeByClientId(clientId);
-    if (node) {
-        graph.remove(node);
-        console.log('Removed node for client:', clientId);
-    }
-}
-
-// Event Listeners
-document.addEventListener('DOMContentLoaded', () => {
-    init();
-
-    // Handle window resize
-    window.addEventListener('resize', () => {
-        if (canvas) {
-            resizeCanvas();
+        // Draw connection indicators
+        if (outCount > 0) {
+            ctx.fillStyle = "#2196F3";
+            ctx.beginPath();
+            ctx.arc(this.size[0] - 20, this.size[1] - 20, 3, 0, Math.PI * 2);
+            ctx.fill();
         }
-    });
-
-    // Set up zoom to fit button
-    const zoomToFitBtn = document.getElementById('zoomToFit');
-    if (zoomToFitBtn) {
-        zoomToFitBtn.addEventListener('click', () => {
-            zoomToFit();
-        });
     }
-});
+
+    // Override connection logic
+    onConnectInput(slot, type, pos, link, input_slot) {
+        if (type !== "audio") return false;
+        
+        // If the slot is already connected, get a new slot
+        if (this.inputs[slot].link) {
+            const newSlot = this.getAvailableRxSlot();
+            // Return the new slot index to tell LiteGraph to use this slot instead
+            return newSlot;
+        }
+        
+        return true; // Allow connection to empty slot
+    }
+}
+
+// Handle window resize
+window.addEventListener('resize', resizeCanvas);
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', init);

@@ -4,8 +4,9 @@ let clientId;
 let audioContext;
 let audioMeter;
 let peerConnections = new Map(); // Map of peerId -> SimplePeer
-let audioContexts = new Map();
-let audioMeters = new Map();
+let audioElements = new Map(); // Map of peerId -> Audio Element
+let transmittingTo = new Set();
+let receivingFrom = new Set();
 
 // Initialize the application
 async function init() {
@@ -21,7 +22,7 @@ async function init() {
 function setupSocketListeners() {
     socket.on('clientId', (id) => {
         clientId = id;
-        updateStatus('Connected to server');
+        updateStatus(`Received client ID: ${id}`);
     });
 
     socket.on('signal', async (data) => {
@@ -29,27 +30,41 @@ function setupSocketListeners() {
         if (peer) {
             try {
                 peer.signal(data.signal);
+                updateStatus(`Processed signal from peer ${data.from}`);
             } catch (e) {
+                updateStatus(`Error processing signal from ${data.from}: ${e.message}`);
                 console.error('Signaling error:', e);
             }
+        } else {
+            updateStatus(`Received signal for unknown peer ${data.from}`);
         }
     });
 
     socket.on('initiateConnection', async (data) => {
         await createPeerConnection(data.peerId, data.initiator);
+        updateStatus(`${data.initiator ? 'Initiating' : 'Accepting'} connection with peer ${data.peerId}`);
     });
 
     socket.on('clientDisconnected', (disconnectedId) => {
         if (peerConnections.has(disconnectedId)) {
             cleanupPeerConnection(disconnectedId);
-            updateStatus('Peer disconnected');
+            updateStatus(`Peer ${disconnectedId} disconnected`);
         }
     });
 
     socket.on('peerDisconnected', (peerId) => {
         console.log('Peer disconnected:', peerId);
         cleanupPeerConnection(peerId);
-        updateStatus('Peer disconnected');
+        updateStatus(`Peer ${peerId} disconnected`);
+    });
+
+    socket.on('connect', () => {
+        updateStatus('Connected to server');
+    });
+
+    socket.on('disconnect', () => {
+        updateStatus('Disconnected from server');
+        cleanupPeerConnections();
     });
 }
 
@@ -57,26 +72,28 @@ function setupSocketListeners() {
 function cleanupPeerConnection(peerId) {
     const peerConnection = peerConnections.get(peerId);
     if (peerConnection) {
+        updateStatus(`Cleaning up connection with peer ${peerId}`);
         peerConnection.destroy();
         peerConnections.delete(peerId);
-        
-        // Clean up audio context if needed
-        if (audioContexts.has(peerId)) {
-            const ctx = audioContexts.get(peerId);
-            ctx.close();
-            audioContexts.delete(peerId);
-        }
-        
-        // Clean up audio meter if exists
-        if (audioMeters.has(peerId)) {
-            audioMeters.delete(peerId);
-        }
     }
+
+    // Clean up audio element
+    const audioElement = audioElements.get(peerId);
+    if (audioElement) {
+        audioElement.srcObject = null;
+        audioElement.remove();
+        audioElements.delete(peerId);
+    }
+    updateStatus(`Connection with peer ${peerId} cleaned up`);
+    transmittingTo.delete(peerId);
+    receivingFrom.delete(peerId);
+    updateConnectionLists();
 }
 
 // Set up audio stream and audio context
 async function setupAudio() {
     try {
+        updateStatus('Requesting microphone access...');
         localStream = await navigator.mediaDevices.getUserMedia({ 
             audio: {
                 echoCancellation: true,
@@ -85,80 +102,191 @@ async function setupAudio() {
             }, 
             video: false 
         });
-        setupAudioMeter();
+        updateStatus('Microphone access granted');
+        
+        // Enable controls
         document.getElementById('muteButton').disabled = false;
-        updateStatus('Microphone connected');
+        updateStatus('Audio stream setup complete');
     } catch (e) {
+        updateStatus(`Error accessing microphone: ${e.message}`);
         console.error('Error accessing microphone:', e);
-        updateStatus('Error accessing microphone');
     }
 }
 
 // Create a new peer connection
 async function createPeerConnection(peerId, initiator) {
+    updateStatus(`Creating peer connection with ${peerId} (initiator: ${initiator})`);
+    
     // Clean up existing connection if any
     cleanupPeerConnection(peerId);
 
-    const peer = new SimplePeer({
-        initiator: initiator,
-        stream: localStream,
-        trickle: false
-    });
-
-    peerConnections.set(peerId, peer);
-
-    peer.on('signal', (signal) => {
-        socket.emit('signal', {
-            target: peerId,
-            from: clientId,
-            signal: signal
+    try {
+        const peer = new SimplePeer({
+            initiator: initiator,
+            stream: localStream,
+            trickle: false
         });
-    });
 
-    peer.on('stream', (stream) => {
-        const audio = new Audio();
-        audio.srcObject = stream;
-        audio.play();
-        updateStatus(`Connected to peer ${peerId}`);
-    });
+        // Set up peer event handlers
+        peer.on('signal', (signal) => {
+            updateStatus(`Sending signal to peer ${peerId}`);
+            socket.emit('signal', { target: peerId, signal: signal });
+        });
 
-    peer.on('error', (err) => {
-        console.error('Peer error:', err);
-        updateStatus('Connection error');
-        cleanupPeerConnection(peerId);
-    });
+        peer.on('stream', (stream) => {
+            updateStatus(`Received audio stream from peer ${peerId}`);
+            // Only add to receivingFrom if we're not the initiator (we're the receiver)
+            if (!initiator) {
+                receivingFrom.add(peerId);
+                updateConnectionLists();
+            }
+            handleIncomingStream(peerId, stream);
+        });
 
-    peer.on('close', () => {
-        updateStatus('Peer connection closed');
-        cleanupPeerConnection(peerId);
-    });
+        peer.on('connect', () => {
+            updateStatus(`Connected to peer ${peerId}`);
+            // Only add to transmittingTo if we're the initiator (we're the sender)
+            if (initiator) {
+                transmittingTo.add(peerId);
+                updateConnectionLists();
+            }
+        });
+
+        peer.on('error', (error) => {
+            updateStatus(`Peer connection error with ${peerId}: ${error.message}`);
+            console.error('Peer connection error:', error);
+            cleanupPeerConnection(peerId);
+        });
+
+        peer.on('close', () => {
+            updateStatus(`Peer connection closed with ${peerId}`);
+            cleanupPeerConnection(peerId);
+        });
+
+        peerConnections.set(peerId, peer);
+        updateStatus(`Peer connection created with ${peerId}`);
+    } catch (error) {
+        updateStatus(`Error creating peer connection with ${peerId}: ${error.message}`);
+        console.error('Error creating peer connection:', error);
+    }
 }
 
 // Set up audio meter visualization
 function setupAudioMeter() {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const source = audioContext.createMediaStreamSource(localStream);
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    source.connect(analyser);
-
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-
-    function updateMeter() {
-        analyser.getByteFrequencyData(dataArray);
-        const average = dataArray.reduce((a, b) => a + b) / bufferLength;
-        const volume = (average / 255) * 100;
-        document.getElementById('meterFill').style.width = `${volume}%`;
-        requestAnimationFrame(updateMeter);
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
     }
 
-    updateMeter();
+    const analyser = audioContext.createAnalyser();
+    const microphone = audioContext.createMediaStreamSource(localStream);
+    microphone.connect(analyser);
+    
+    analyser.fftSize = 256;
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    audioMeter = { analyser, dataArray };
+    updateAudioMeter();
+    updateStatus('Setting up volume meter');
 }
 
-// Update the status display
+// Update audio meter visualization
+function updateAudioMeter() {
+    if (!audioMeter) return;
+    
+    requestAnimationFrame(updateAudioMeter);
+    audioMeter.analyser.getByteFrequencyData(audioMeter.dataArray);
+    
+    let sum = 0;
+    for (let i = 0; i < audioMeter.dataArray.length; i++) {
+        sum += audioMeter.dataArray[i];
+    }
+    const average = sum / audioMeter.dataArray.length;
+    
+    const meter = document.getElementById('audioMeter');
+    if (meter) {
+        meter.value = average;
+    }
+    updateStatus('Volume meter active');
+}
+
+// Update connection lists
+function updateConnectionLists() {
+    // Update transmitting list
+    const transmittingList = document.getElementById('transmittingList');
+    const transmittingCount = document.getElementById('transmittingCount');
+    transmittingList.innerHTML = '';
+    transmittingCount.textContent = transmittingTo.size;
+    
+    if (transmittingTo.size === 0) {
+        transmittingList.innerHTML = '<li class="empty-message">No active transmissions</li>';
+    } else {
+        Array.from(transmittingTo).forEach(id => {
+            const li = document.createElement('li');
+            const dot = document.createElement('span');
+            dot.className = 'status-dot';
+            li.appendChild(dot);
+            li.appendChild(document.createTextNode(`Client ${id.substring(0, 8)}`));
+            transmittingList.appendChild(li);
+        });
+    }
+    
+    // Update receiving list
+    const receivingList = document.getElementById('receivingList');
+    const receivingCount = document.getElementById('receivingCount');
+    receivingList.innerHTML = '';
+    receivingCount.textContent = receivingFrom.size;
+    
+    if (receivingFrom.size === 0) {
+        receivingList.innerHTML = '<li class="empty-message">No active receivers</li>';
+    } else {
+        Array.from(receivingFrom).forEach(id => {
+            const li = document.createElement('li');
+            const dot = document.createElement('span');
+            dot.className = 'status-dot';
+            li.appendChild(dot);
+            li.appendChild(document.createTextNode(`Client ${id.substring(0, 8)}`));
+            receivingList.appendChild(li);
+        });
+    }
+}
+
+// Update status display with timestamp
 function updateStatus(message) {
-    document.getElementById('status').textContent = `Status: ${message}`;
+    const statusContainer = document.querySelector('.status-container');
+    const statusList = document.getElementById('status');
+    const now = new Date();
+    const timestamp = now.toLocaleTimeString();
+    
+    const logEntry = document.createElement('li');
+    logEntry.className = 'log-entry';
+    
+    const timestampSpan = document.createElement('span');
+    timestampSpan.className = 'timestamp';
+    timestampSpan.textContent = timestamp;
+    
+    const messageSpan = document.createElement('span');
+    messageSpan.className = 'message';
+    messageSpan.textContent = message;
+    
+    logEntry.appendChild(timestampSpan);
+    logEntry.appendChild(messageSpan);
+    
+    statusList.appendChild(logEntry);
+    
+    // Keep only last 100 messages
+    while (statusList.children.length > 100) {
+        statusList.removeChild(statusList.firstChild);
+    }
+    
+    // Auto-scroll to bottom if we're already near the bottom
+    const isNearBottom = statusContainer.scrollHeight - statusContainer.scrollTop - statusContainer.clientHeight < 50;
+    if (isNearBottom) {
+        statusContainer.scrollTop = statusContainer.scrollHeight;
+    }
+    
+    // Also log to console for debugging
+    console.log(`[${timestamp}] ${message}`);
 }
 
 // Event Listeners
@@ -170,21 +298,43 @@ document.addEventListener('DOMContentLoaded', () => {
     muteButton.addEventListener('click', () => {
         const audioTracks = localStream.getAudioTracks();
         const isEnabled = audioTracks[0].enabled;
-        audioTracks[0].enabled = !isEnabled;
+        audioTracks.forEach(track => {
+            track.enabled = !isEnabled;
+        });
+        updateStatus(`Microphone ${isEnabled ? 'muted' : 'unmuted'}`);
         muteButton.textContent = isEnabled ? 'Unmute' : 'Mute';
     });
 
-    // Volume slider
+    // Master volume slider
     const volumeSlider = document.getElementById('volumeSlider');
     volumeSlider.addEventListener('input', (e) => {
-        const peerConnectionsArray = Array.from(peerConnections.values());
-        peerConnectionsArray.forEach((peer) => {
-            if (peer.remoteStream) {
-                const audio = document.querySelector('audio');
-                if (audio) {
-                    audio.volume = e.target.value / 100;
-                }
-            }
+        const volume = e.target.value / 100;
+        // Update all audio elements
+        audioElements.forEach(audio => {
+            audio.volume = volume;
         });
+        
+        // Update volume percentage display
+        const volumeValue = document.querySelector('.volume-value');
+        if (volumeValue) {
+            volumeValue.textContent = `${e.target.value}%`;
+        }
     });
 });
+
+function handleIncomingStream(peerId, stream) {
+    updateStatus(`Received audio stream from peer ${peerId}`);
+    // Create and set up audio element
+    const audio = new Audio();
+    audio.autoplay = true;
+    audio.srcObject = stream;
+    
+    // Store the audio element
+    audioElements.set(peerId, audio);
+
+    // Set initial volume
+    const volumeSlider = document.getElementById('volumeSlider');
+    if (volumeSlider) {
+        audio.volume = volumeSlider.value / 100;
+    }
+}
