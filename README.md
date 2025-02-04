@@ -1,5 +1,5 @@
 # Switchboard - WebRTC Audio Node System
-![Switchboard Screenshot](switchboard.jpg)
+![Switchboard Screenshot](images/switchboard.jpg)
 
 A real-time audio routing system built with WebRTC, Socket.IO, and Express. This application allows multiple clients to connect and route audio streams between each other through a central admin interface.
 
@@ -66,6 +66,7 @@ The client interface shows:
 - Connection status
 - Audio controls
 
+![Client Interface Screenshot](images/audio_client.jpg)
 ### Admin Interface
 
 1. Access the admin panel:
@@ -78,6 +79,8 @@ Features:
 - Drag and drop to create audio routes
 - Real-time connection status
 - Client name display
+
+![Admin Interface Screenshot](images/admin_panel.jpg)
 
 ## Project Structure
 
