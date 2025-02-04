@@ -66,7 +66,7 @@ The client interface shows:
 - Connection status
 - Audio controls
 
-![Client Interface Screenshot](images/audio_client.jpg)
+![Client Interface Screenshot](images/audio_client.png)
 ### Admin Interface
 
 1. Access the admin panel:
@@ -80,7 +80,7 @@ Features:
 - Real-time connection status
 - Client name display
 
-![Admin Interface Screenshot](images/admin_panel.jpg)
+![Admin Interface Screenshot](images/admin_panel.png)
 
 ## Project Structure
 
