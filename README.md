@@ -1,49 +1,146 @@
-# WebRTC Audio Application
+# Switchboard - WebRTC Audio Node System
+![Switchboard Screenshot](switchboard.jpg)
 
-This is a WebRTC-based audio application that allows users to connect and communicate through audio channels. An admin can manage and establish connections between clients.
+A real-time audio routing system built with WebRTC, Socket.IO, and Express. This application allows multiple clients to connect and route audio streams between each other through a central admin interface.
 
 ## Features
 
-- Real-time audio streaming using WebRTC
-- Admin panel for managing client connections
-- Audio visualization meter
-- Mute/unmute functionality
-- Volume control
-- Simple and intuitive UI
+- **Real-time Audio Streaming**: Stream audio between multiple clients using WebRTC
+- **Admin Control Panel**: Visual interface for managing audio connections
+- **Client Identification**: Custom client names for easy identification
+- **Connection Status**: Real-time status updates and connection tracking
+- **Modern UI**: Built with Tailwind CSS for a clean, responsive interface
 
-## Setup
+## Prerequisites
 
-1. Install dependencies:
+- Node.js (v14 or higher)
+- npm (v6 or higher)
+- Modern web browser with WebRTC support
+- SSL certificates for HTTPS (required for WebRTC)
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone [repository-url]
+cd soundnode3
+```
+
+2. Install dependencies:
 ```bash
 npm install
 ```
 
-2. Start the server:
+3. Build the CSS:
+```bash
+npm run build:css
+```
+
+4. Start the server:
 ```bash
 npm start
 ```
 
-3. Access the application:
-- Open `http://localhost:3000` in your browser
-- Allow microphone access when prompted
+For development with hot CSS reloading:
+```bash
+npm run watch:css
+```
 
 ## Usage
 
-### As a Client
-1. Open the application in your browser
-2. Grant microphone permissions when prompted
-3. Wait for an admin to establish a connection with another client
-4. Use the mute button and volume slider to control audio
+### Client Interface
 
-### As an Admin
-1. Click "Login as Admin"
-2. Enter the admin password (default: "admin123")
-3. Select two clients from the dropdown menus
-4. Click "Connect Selected Clients" to establish an audio connection
+1. Access the client interface:
+```
+https://localhost:3000
+```
 
-## Security Note
-For production use, please:
-1. Change the admin password in server.js
-2. Implement proper authentication
-3. Use HTTPS
-4. Add additional security measures as needed
+2. To connect with a custom client name, use the URL parameter:
+```
+https://localhost:3000/?id=MyClientName
+```
+
+The client interface shows:
+- Your client ID
+- Your socket ID
+- Connection status
+- Audio controls
+
+### Admin Interface
+
+1. Access the admin panel:
+```
+https://localhost:3000/admin
+```
+
+Features:
+- Visual node-based interface for managing connections
+- Drag and drop to create audio routes
+- Real-time connection status
+- Client name display
+
+## Project Structure
+
+```
+soundnode3/
+├── public/
+│   ├── src/
+│   │   └── input.css      # Tailwind source CSS
+│   ├── admin.html         # Admin interface
+│   ├── admin.js           # Admin panel logic
+│   ├── client.js          # Client-side WebRTC logic
+│   ├── index.html         # Client interface
+│   └── style.css          # Compiled CSS
+├── server.js              # Express server & Socket.IO logic
+├── package.json           # Project dependencies
+└── tailwind.config.js     # Tailwind configuration
+```
+
+## Scripts
+
+- `npm start`: Start the server
+- `npm run start:network`: Start server accessible from network
+- `npm run build:css`: Build Tailwind CSS
+- `npm run watch:css`: Watch and build CSS in development
+- `npm run dev`: Build CSS and start server
+
+## Technical Details
+
+- **WebRTC**: Handles peer-to-peer audio streaming
+- **Socket.IO**: Manages signaling and client connections
+- **Express**: Serves static files and handles routing
+- **Tailwind CSS**: Handles styling and UI components
+- **LiteGraph.js**: Powers the admin interface visualization
+
+## Security Notes
+
+- HTTPS is required for WebRTC functionality
+- Place your SSL certificates in the project root:
+  - `localhost.key`
+  - `localhost.crt`
+
+## Development
+
+1. Start the CSS watcher:
+```bash
+npm run watch:css
+```
+
+2. In another terminal, start the server:
+```bash
+npm start
+```
+
+3. Access the application at `https://localhost:3000`
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a new Pull Request
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
