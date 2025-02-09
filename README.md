@@ -23,7 +23,7 @@ A real-time audio routing system built with WebRTC, Socket.IO, and Express. This
 1. Clone the repository:
 ```bash
 git clone [repository-url]
-cd soundnode3
+cd switchboard
 ```
 
 2. Install dependencies:
@@ -85,7 +85,7 @@ Features:
 ## Project Structure
 
 ```
-soundnode3/
+switchboard/
 ├── public/
 │   ├── src/
 │   │   └── input.css      # Tailwind source CSS
